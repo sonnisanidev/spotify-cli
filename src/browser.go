@@ -53,7 +53,7 @@ func (c *SpotifyClient) PlayTrack(uri string) error {
 
 	// Convert Spotify URI to web URL
 	webURL := convertURItoURL(uri)
-	
+
 	// Get preferred browser
 	browser := GetPreferredBrowser()
 	fmt.Printf("Opening %s in %s...\n", webURL, browser)
@@ -63,7 +63,7 @@ func (c *SpotifyClient) PlayTrack(uri string) error {
 	if runtime.GOOS == "windows" {
 		// Use PowerShell to find and activate the browser
 		var psScript string
-		
+
 		if browser == Chrome {
 			psScript = fmt.Sprintf(`
 				$url = "%s"
