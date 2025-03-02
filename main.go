@@ -113,7 +113,11 @@ func main() {
 					results, err = client.ShowNewReleases()
 					if err != nil {
 						fmt.Println("Error after token refresh:", err)
+						continue
 					}
+					// If successful after token refresh, update lastNewReleases
+					lastNewReleases = results
+					continue
 				}
 				continue
 			}
@@ -149,7 +153,11 @@ func main() {
 					results, err = client.ListPlaylists()
 					if err != nil {
 						fmt.Println("Error after token refresh:", err)
+						continue
 					}
+					// If successful after token refresh, update lastPlaylists
+					lastPlaylists = results
+					continue
 				}
 				continue
 			}
@@ -238,7 +246,11 @@ func main() {
 					results, err = client.SearchTracks(query)
 					if err != nil {
 						fmt.Println("Error after token refresh:", err)
+						continue
 					}
+					// If successful after token refresh, update lastSearchResults
+					lastSearchResults = results
+					continue
 				}
 				continue
 			}
