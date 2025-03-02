@@ -6,10 +6,40 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 )
+
+// Browser type to use for playback
+type Browser string
+
+const (
+	Firefox Browser = "firefox"
+	Chrome  Browser = "chrome"
+)
+
+// GetPreferredBrowser returns the preferred browser from environment or default to Firefox
+func GetPreferredBrowser() Browser {
+	browser := os.Getenv("SPOTIFY_PREFERRED_BROWSER")
+	if strings.EqualFold(browser, "chrome") {
+		return Chrome
+	}
+	return Firefox
+}
+
+// Convert Spotify URI to web URL
+func convertURItoURL(uri string) string {
+	parts := strings.Split(uri, ":")
+	if len(parts) < 3 {
+		return "https://open.spotify.com"
+	}
+
+	resourceType := parts[1]
+	resourceID := parts[2]
+	return fmt.Sprintf("https://open.spotify.com/%s/%s", resourceType, resourceID)
+}
 
 func (c *SpotifyClient) PlayTrack(uri string) error {
 	// First, try to play the track via the Spotify API
@@ -23,57 +53,92 @@ func (c *SpotifyClient) PlayTrack(uri string) error {
 
 	// Convert Spotify URI to web URL
 	webURL := convertURItoURL(uri)
-	fmt.Printf("Opening %s in browser...\n", webURL)
+	
+	// Get preferred browser
+	browser := GetPreferredBrowser()
+	fmt.Printf("Opening %s in %s...\n", webURL, browser)
 
-	// Try to play in the current Firefox tab
+	// Try to play in the browser
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// Use PowerShell to find and activate Firefox
-		// This script attempts to:
-		// 1. Find Firefox process
-		// 2. Activate the window
-		// 3. Send JavaScript to the current tab to navigate to the URL
-		psScript := fmt.Sprintf(`
-			$url = "%s"
-			
-			# First try to use the Spotify Web API to play the track
-			# This is the most reliable method if the web player is already open
-			
-			# Then try to navigate the current tab
-			$firefoxProcess = Get-Process firefox -ErrorAction SilentlyContinue
-			if ($firefoxProcess) {
-				# Try to activate the Firefox window
-				$wshell = New-Object -ComObject wscript.shell
-				if ($wshell.AppActivate('Firefox')) {
-					Write-Host "Firefox window activated"
-					# Now we'll use the clipboard to pass the URL
-					Set-Clipboard -Value $url
-					# Simulate Ctrl+L to focus address bar
-					$wshell.SendKeys('^l')
-					Start-Sleep -Milliseconds 100
-					# Enter the URL
-					$wshell.SendKeys($url)
-					Start-Sleep -Milliseconds 100
-					# Press Enter
-					$wshell.SendKeys('{ENTER}')
+		// Use PowerShell to find and activate the browser
+		var psScript string
+		
+		if browser == Chrome {
+			psScript = fmt.Sprintf(`
+				$url = "%s"
+				
+				# Try to navigate Chrome
+				$chromeProcess = Get-Process chrome -ErrorAction SilentlyContinue
+				if ($chromeProcess) {
+					# Try to activate the Chrome window
+					$wshell = New-Object -ComObject wscript.shell
+					if ($wshell.AppActivate('Chrome')) {
+						Write-Host "Chrome window activated"
+						# Now we'll use the clipboard to pass the URL
+						Set-Clipboard -Value $url
+						# Simulate Ctrl+L to focus address bar
+						$wshell.SendKeys('^l')
+						Start-Sleep -Milliseconds 100
+						# Enter the URL
+						$wshell.SendKeys($url)
+						Start-Sleep -Milliseconds 100
+						# Press Enter
+						$wshell.SendKeys('{ENTER}')
+					} else {
+						# Couldn't activate, open in new tab
+						Start-Process "chrome.exe" -ArgumentList "$url"
+					}
 				} else {
-					# Couldn't activate, open in new tab
-					Start-Process "firefox.exe" -ArgumentList "-new-tab", "$url"
+					# Chrome is not running, start it
+					Start-Process "chrome.exe" "$url"
 				}
-			} else {
-				# Firefox is not running, start it
-				Start-Process "firefox.exe" "$url"
-			}
-		`, webURL)
+			`, webURL)
+		} else {
+			// Default to Firefox
+			psScript = fmt.Sprintf(`
+				$url = "%s"
+				
+				# Try to navigate Firefox
+				$firefoxProcess = Get-Process firefox -ErrorAction SilentlyContinue
+				if ($firefoxProcess) {
+					# Try to activate the Firefox window
+					$wshell = New-Object -ComObject wscript.shell
+					if ($wshell.AppActivate('Firefox')) {
+						Write-Host "Firefox window activated"
+						# Now we'll use the clipboard to pass the URL
+						Set-Clipboard -Value $url
+						# Simulate Ctrl+L to focus address bar
+						$wshell.SendKeys('^l')
+						Start-Sleep -Milliseconds 100
+						# Enter the URL
+						$wshell.SendKeys($url)
+						Start-Sleep -Milliseconds 100
+						# Press Enter
+						$wshell.SendKeys('{ENTER}')
+					} else {
+						# Couldn't activate, open in new tab
+						Start-Process "firefox.exe" -ArgumentList "-new-tab", "$url"
+					}
+				} else {
+					# Firefox is not running, start it
+					Start-Process "firefox.exe" "$url"
+				}
+			`, webURL)
+		}
 
 		cmd = exec.Command("powershell", "-Command", psScript)
 	} else {
 		// For non-Windows systems
-		cmd = exec.Command("firefox", webURL)
+		if browser == Chrome {
+			cmd = exec.Command("google-chrome", webURL)
+		} else {
+			cmd = exec.Command("firefox", webURL)
+		}
 	}
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("error controlling Firefox: %v", err)
+		return fmt.Errorf("error controlling %s: %v", browser, err)
 	}
 
 	return nil

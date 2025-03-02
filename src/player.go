@@ -6,21 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 	"strings"
 	"time"
 )
 
 var lastPlaylists []Playlist
-
-func convertURItoURL(uri string) string {
-	// Convert spotify:track:xxx to https://open.spotify.com/track/xxx
-	parts := strings.Split(uri, ":")
-	if len(parts) != 3 {
-		return uri
-	}
-	return fmt.Sprintf("https://open.spotify.com/%s/%s", parts[1], parts[2])
-}
 
 // ListPlaylists lists the user's playlists
 func (c *SpotifyClient) ListPlaylists() (Playlists, error) {
@@ -52,22 +42,17 @@ func (c *SpotifyClient) ListPlaylists() (Playlists, error) {
 		return results, fmt.Errorf("error parsing response: %v", err)
 	}
 
+	// Store results in global variable for later access
+	lastPlaylists = playlistsResponse.Items
 	results.Items = playlistsResponse.Items
 
-	// Display the results
-	fmt.Println("\n\033[1;36m╔══════════════════════════════════════════════════════════════════════════╗\033[0m")
-	fmt.Println("\033[1;36m║\033[0m \033[1;33mYour Playlists:\033[0m                                                        \033[1;36m║\033[0m")
+	// Print playlists
+	fmt.Println("\033[1;36m╔══════════════════════════════════════════════════════════════════════════╗\033[0m")
+	fmt.Println("\033[1;36m║ \033[1;33mYour Playlists                                                          \033[1;36m║\033[0m")
 	fmt.Println("\033[1;36m╠══════════════════════════════════════════════════════════════════════════╣\033[0m")
 
-	for i, playlist := range results.Items {
-		fmt.Printf("\033[1;36m║\033[0m \033[1;32m%2d.\033[0m %-70s \033[1;36m║\033[0m\n", i+1, truncateString(playlist.Name, 70))
-		if playlist.Owner.DisplayName != "" {
-			fmt.Printf("\033[1;36m║\033[0m     \033[1;90mBy:\033[0m %-69s \033[1;36m║\033[0m\n", truncateString(playlist.Owner.DisplayName, 69))
-		}
-		fmt.Printf("\033[1;36m║\033[0m     \033[1;90mTracks:\033[0m %-66d \033[1;36m║\033[0m\n", playlist.Tracks.Total)
-		if i < len(results.Items)-1 {
-			fmt.Println("\033[1;36m║\033[0m                                                                          \033[1;36m║\033[0m")
-		}
+	for i, playlist := range playlistsResponse.Items {
+		fmt.Printf("\033[1;36m║ \033[1;32m%2d. \033[1;37m%-65s \033[1;36m║\033[0m\n", i+1, truncateString(playlist.Name, 65))
 	}
 
 	fmt.Println("\033[1;36m╚══════════════════════════════════════════════════════════════════════════╝\033[0m")
@@ -91,29 +76,28 @@ func (c *SpotifyClient) PlayPlaylist(playlistID string) error {
 		}
 
 		req.Header.Add("Authorization", "Bearer "+c.AccessToken)
+
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("error making request: %v", err)
 		}
 
-		var devices struct {
+		var deviceResponse struct {
 			Devices []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-				Type string `json:"type"`
+				ID     string `json:"id"`
+				Active bool   `json:"is_active"`
 			} `json:"devices"`
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		if err := json.NewDecoder(resp.Body).Decode(&deviceResponse); err != nil {
+			resp.Body.Close()
+			return fmt.Errorf("error parsing response: %v", err)
+		}
 		resp.Body.Close()
 
-		if err := json.Unmarshal(body, &devices); err != nil {
-			return fmt.Errorf("error parsing devices: %v", err)
-		}
-
-		// Try to find a browser device
-		for _, device := range devices.Devices {
-			if device.Type == "Computer" || device.Type == "Web Player" {
+		// Look for an active device
+		for _, device := range deviceResponse.Devices {
+			if device.Active {
 				deviceID = device.ID
 				break
 			}
@@ -122,24 +106,15 @@ func (c *SpotifyClient) PlayPlaylist(playlistID string) error {
 		if deviceID != "" {
 			break
 		}
-		time.Sleep(2 * time.Second)
+
+		time.Sleep(1 * time.Second)
 	}
 
 	// If no device found, open the web player
 	if deviceID == "" {
-		// Convert Spotify URI to web URL
-		parts := strings.Split(uri, ":")
-		if len(parts) != 3 {
-			return fmt.Errorf("invalid Spotify URI format")
-		}
-		webURL := fmt.Sprintf("https://open.spotify.com/%s/%s", parts[1], parts[2])
-
-		cmd := exec.Command("cmd", "/c", "start", "firefox.exe", webURL)
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to open Firefox: %v", err)
-		}
-		time.Sleep(3 * time.Second)
-		return nil
+		// Fall back to browser playback
+		fmt.Println("No active Spotify device found. Opening in browser...")
+		return c.PlayTrack(uri)
 	}
 
 	// Try to start playback
@@ -148,30 +123,29 @@ func (c *SpotifyClient) PlayPlaylist(playlistID string) error {
 		"device_id":   deviceID,
 	}
 
-	jsonBody, err := json.Marshal(requestBody)
+	playJSON, err := json.Marshal(requestBody)
 	if err != nil {
-		return fmt.Errorf("error creating request body: %v", err)
+		return fmt.Errorf("error marshaling request: %v", err)
 	}
 
-	req, err := http.NewRequest("PUT", "https://api.spotify.com/v1/me/player/play", bytes.NewBuffer(jsonBody))
+	playReq, err := http.NewRequest("PUT", "https://api.spotify.com/v1/me/player/play", bytes.NewBuffer(playJSON))
 	if err != nil {
 		return fmt.Errorf("error creating request: %v", err)
 	}
 
-	req.Header.Add("Authorization", "Bearer "+c.AccessToken)
-	req.Header.Add("Content-Type", "application/json")
+	playReq.Header.Add("Authorization", "Bearer "+c.AccessToken)
+	playReq.Header.Add("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	playResp, err := http.DefaultClient.Do(playReq)
 	if err != nil {
 		return fmt.Errorf("error making request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer playResp.Body.Close()
 
 	fmt.Printf("Playing playlist: %s\n", playlistID)
 	return nil
 }
 
-// PlayAlbum plays an album by its ID
 func (c *SpotifyClient) PlayAlbum(albumID string) error {
 	// Construct the URI if it's not already in the correct format
 	uri := albumID
@@ -216,6 +190,13 @@ func (c *SpotifyClient) PlayAlbum(albumID string) error {
 	// If no active device found, use the first available one
 	if deviceID == "" && len(deviceResp.Devices) > 0 {
 		deviceID = deviceResp.Devices[0].ID
+	}
+
+	// If no device found, open the web player
+	if deviceID == "" {
+		// Fall back to browser playback
+		fmt.Println("No active Spotify device found. Opening in browser...")
+		return c.PlayTrack(uri)
 	}
 
 	// Prepare play request

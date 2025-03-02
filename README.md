@@ -52,9 +52,12 @@ Create a `.env` file in the root directory with the following content:
 SPOTIFY_CLIENT_ID=your_client_id_here
 SPOTIFY_CLIENT_SECRET=your_client_secret_here
 SPOTIFY_REDIRECT_URI=http://localhost:8888/callback
+SPOTIFY_PREFERRED_BROWSER=firefox
 ```
 
 Replace `your_client_id_here` and `your_client_secret_here` with the values from your Spotify Developer Dashboard.
+
+For the `SPOTIFY_PREFERRED_BROWSER` setting, you can choose either `firefox` (default) or `chrome`. This setting determines which browser will be used when the application needs to open the Spotify Web Player.
 
 ## Usage
 
